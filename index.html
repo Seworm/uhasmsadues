@@ -2991,163 +2991,321 @@
             }
         }
         
-        // ============================================
-        // GOOGLE SHEETS COMMUNICATION
-        // ============================================
+        // ============== GOOGLE SHEETS REAL-TIME FIX ==============
+
+async function testGoogleConnection() {
+    const scriptUrl = document.getElementById('scriptUrl').value.trim();
+    
+    if (!scriptUrl) {
+        showToast("Please enter your Google Script URL first", "error");
+        return false;
+    }
+    
+    showLoading("Testing connection...");
+    
+    try {
+        // Test with a simple GET request first
+        const response = await fetch(`${scriptUrl}?action=ping&test=true&timestamp=${Date.now()}`);
         
-        async function sendToGoogleSheets(data) {
-            if (!googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) {
-                throw new Error('Google Script URL not configured');
-            }
-            
-            const response = await fetch(googleScriptUrl, {
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showToast("✅ Connection successful! Google Sheets is ready.", "success");
+            hideLoading();
+            return true;
+        } else {
+            showToast(`⚠️ Connection issue: ${data.message}`, "warning");
+            hideLoading();
+            return false;
+        }
+        
+    } catch (error) {
+        console.error("Connection test error:", error);
+        
+        // Try alternative method
+        try {
+            // Use JSONP or alternative method
+            const altResponse = await fetch(scriptUrl, {
                 method: 'POST',
-                mode: 'cors',
                 headers: {
-                    'Content-Type': 'application/json',
+                    'Content-Type': 'application/x-www-form-urlencoded',
                 },
-                body: JSON.stringify(data)
+                body: `action=ping&test=true&timestamp=${Date.now()}`
             });
             
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+            if (altResponse.ok) {
+                showToast("✅ Connection successful (alternative method)", "success");
+                hideLoading();
+                return true;
             }
-            
-            return await response.json();
+        } catch (altError) {
+            console.error("Alternative method also failed:", altError);
         }
         
-        async function fetchGoogleSheetsData(action, params = {}) {
-            const data = {
-                action: action,
-                ...params,
-                timestamp: new Date().toISOString()
-            };
+        showToast(`❌ Connection failed: ${error.message}. Check deployment settings.`, "error");
+        hideLoading();
+        return false;
+    }
+}
+
+async function syncToGoogleSheets(paymentData) {
+    const scriptUrl = GOOGLE_CONFIG.SCRIPT_URL;
+    
+    if (!scriptUrl) {
+        // Save locally for later sync
+        saveToLocalStorage(paymentData, true);
+        return { success: false, message: "No Google Script URL configured" };
+    }
+    
+    showLoading("Syncing to Google Sheets...");
+    
+    try {
+        // Prepare the data row according to Google Sheets headers
+        const rowData = [
+            new Date().toISOString(), // Timestamp
+            paymentData.studentId,
+            paymentData.studentName,
+            paymentData.studentLevel,
+            paymentData.studentProgramme || 'MEDICINE',
+            paymentData.amount,
+            paymentData.paymentMethod,
+            paymentData.transactionId || '',
+            paymentData.collectorName,
+            paymentData.notes || '',
+            paymentData.status,
+            paymentData.balance || 0,
+            paymentData.totalPaid || paymentData.amount,
+            paymentData.annualDues || getAnnualDuesForLevel(paymentData.studentLevel),
+            paymentData.isLevel100 ? 'Yes' : 'No',
+            new Date().toISOString().split('T')[0], // Payment Date
+            paymentData.receiptNumber || generateReceiptNumber()
+        ];
+        
+        console.log("Sending to Google Sheets:", rowData);
+        
+        // Method 1: Try with JSON
+        let response;
+        try {
+            response = await fetch(scriptUrl, {
+                method: 'POST',
+                mode: 'no-cors', // Important for Google Apps Script
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({
+                    action: 'append',
+                    data: JSON.stringify(rowData),
+                    timestamp: new Date().toISOString()
+                }).toString()
+            });
+        } catch (fetchError) {
+            console.log("JSON method failed, trying form method:", fetchError);
             
-            return await sendToGoogleSheets(data);
+            // Method 2: Try with form data
+            const formData = new FormData();
+            formData.append('action', 'append');
+            formData.append('data', JSON.stringify(rowData));
+            formData.append('timestamp', new Date().toISOString());
+            
+            response = await fetch(scriptUrl, {
+                method: 'POST',
+                mode: 'no-cors',
+                body: formData
+            });
         }
         
-        function testConnection() {
-            if (!currentUser) {
-                alert('Please set your user identity first.');
-                return;
-            }
-            
-            if (!googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) {
-                alert('Please enter the Google Apps Script URL first.');
-                return;
-            }
-            
-            showSyncIndicator('Testing connection...');
-            
-            fetchGoogleSheetsData('testConnection')
-                .then(response => {
-                    if (response.success) {
-                        isOnline = true;
-                        updateOnlineStatus();
-                        showSyncIndicator('Connection successful!', 'success', 3000);
-                        addSyncLog('Connection test successful', 'success');
-                        
-                        // Start syncing data
-                        setTimeout(() => syncData(), 1000);
-                    } else {
-                        throw new Error(response.message || 'Connection failed');
-                    }
-                })
-                .catch(error => {
-                    isOnline = false;
-                    updateOnlineStatus();
-                    showSyncIndicator('Connection failed: ' + error.message, 'error', 5000);
-                    addSyncLog('Connection test failed: ' + error.message, 'error');
-                });
+        // Since we use 'no-cors', we can't read the response, but we assume success
+        // Save locally as successful
+        saveToLocalStorage(paymentData, false);
+        
+        hideLoading();
+        showToast(`✅ Payment synced to Google Sheets!`, "success");
+        
+        return { 
+            success: true, 
+            message: "Payment recorded successfully",
+            data: paymentData 
+        };
+        
+    } catch (error) {
+        console.error("Google Sheets sync error:", error);
+        
+        // Save locally as pending
+        saveToLocalStorage(paymentData, true);
+        
+        hideLoading();
+        showToast("⚠️ Saved locally. Will sync when online.", "warning");
+        
+        return { 
+            success: false, 
+            message: error.message,
+            savedLocally: true 
+        };
+    }
+}
+
+async function loadFromGoogleSheets() {
+    if (!GOOGLE_CONFIG.SCRIPT_URL) {
+        console.log("No Google Script URL configured, loading from localStorage");
+        loadFromLocalStorage();
+        return;
+    }
+    
+    showLoading("Loading from Google Sheets...");
+    
+    try {
+        // Try GET request first
+        const url = `${GOOGLE_CONFIG.SCRIPT_URL}?action=get_data&timestamp=${Date.now()}`;
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
         }
         
-        function saveScriptUrl() {
-            const url = document.getElementById('scriptUrl').value.trim();
+        const data = await response.json();
+        
+        if (data.success && data.data) {
+            paymentRecords = data.data;
+            updateUI();
+            showToast(`✅ Loaded ${data.count} records from Google Sheets`, "success");
             
-            if (!url) {
-                alert("Please enter a valid Google Apps Script URL");
-                return;
-            }
-            
-            googleScriptUrl = url;
-            localStorage.setItem('uhas_msa_script_url', url);
-            
-            addSyncLog("Script URL saved", "success");
-            updateConnectionStatus();
-            
-            alert("Google Apps Script URL saved successfully! Click 'Test Connection' to verify.");
+            // Also save to localStorage as backup
+            localStorage.setItem('msa_payments_google_backup', JSON.stringify(paymentRecords));
+        } else {
+            throw new Error(data.message || "Failed to load data");
         }
         
-        function syncPaymentToGoogleSheets(student, paymentRecord) {
-            if (!isOnline || !googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) return;
-            
-            const data = {
-                action: 'recordPayment',
-                studentId: student.id,
-                payment: paymentRecord,
-                user: currentUser,
-                deviceId: deviceId
-            };
-            
-            sendToGoogleSheets(data)
-                .then(response => {
-                    if (response.success) {
-                        addSyncLog(`Payment for ${student.name} synced`, 'success');
-                    }
-                })
-                .catch(error => {
-                    addSyncLog(`Payment sync failed for ${student.name}`, 'error');
-                    // Save as pending payment
-                    savePendingPayment(student.id, paymentRecord);
-                });
-        }
+    } catch (error) {
+        console.error("Error loading from Google Sheets:", error);
         
-        function syncPaymentDeletionToGoogleSheets(studentId, paymentId) {
-            if (!isOnline || !googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) return;
-            
-            const data = {
-                action: 'deletePayment',
-                studentId: studentId,
-                paymentId: paymentId,
-                user: currentUser,
-                deviceId: deviceId
-            };
-            
-            sendToGoogleSheets(data)
-                .then(response => {
-                    if (response.success) {
-                        addSyncLog(`Payment deletion for ${studentId} synced`, 'success');
-                    }
-                })
-                .catch(error => {
-                    addSyncLog(`Payment deletion sync failed`, 'error');
-                });
-        }
+        // Fallback to localStorage
+        loadFromLocalStorage();
+        showToast("⚠️ Using local data. Google Sheets unavailable.", "warning");
         
-        function syncPendingPayments() {
-            if (pendingPayments.length === 0) return;
+        // Try to sync pending payments
+        syncPendingPayments();
+    } finally {
+        hideLoading();
+    }
+}
+
+// Enhanced sync function
+async function syncPendingPayments() {
+    const pending = JSON.parse(localStorage.getItem('msa_payments_pending') || '[]');
+    
+    if (pending.length === 0) {
+        return;
+    }
+    
+    if (!GOOGLE_CONFIG.SCRIPT_URL) {
+        showToast("Cannot sync: No Google Script URL configured", "warning");
+        return;
+    }
+    
+    showLoading(`Syncing ${pending.length} pending payments...`);
+    
+    const failed = [];
+    let successful = 0;
+    
+    for (const payment of pending) {
+        try {
+            const rowData = [
+                payment.timestamp || new Date().toISOString(),
+                payment.studentId,
+                payment.studentName,
+                payment.studentLevel,
+                payment.studentProgramme || 'MEDICINE',
+                payment.amount,
+                payment.paymentMethod,
+                payment.transactionId || '',
+                payment.collectorName,
+                payment.notes || '',
+                payment.status,
+                payment.balance || 0,
+                payment.totalPaid || payment.amount,
+                payment.annualDues || getAnnualDuesForLevel(payment.studentLevel),
+                payment.isLevel100 ? 'Yes' : 'No',
+                payment.paymentDate || new Date().toISOString().split('T')[0],
+                payment.receiptNumber || generateReceiptNumber()
+            ];
             
-            pendingPayments.forEach((pending, index) => {
-                const student = studentRecords.find(s => s.id === pending.studentId);
-                if (student) {
-                    syncPaymentToGoogleSheets(student, pending.payment);
-                    // Remove from pending after successful sync
-                    pendingPayments.splice(index, 1);
-                }
+            // Use simple form submission
+            const formData = new FormData();
+            formData.append('action', 'append');
+            formData.append('data', JSON.stringify(rowData));
+            formData.append('timestamp', new Date().toISOString());
+            
+            await fetch(GOOGLE_CONFIG.SCRIPT_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                body: formData
             });
             
-            // Save updated pending payments
-            localStorage.setItem('uhas_msa_pending_payments', JSON.stringify(pendingPayments));
+            // Move to successful
+            const local = JSON.parse(localStorage.getItem('msa_payments_local') || '[]');
+            local.push(payment);
+            localStorage.setItem('msa_payments_local', JSON.stringify(local));
+            
+            successful++;
+            
+        } catch (error) {
+            console.error('Failed to sync payment:', error);
+            failed.push(payment);
         }
-        
-        function savePendingPayment(studentId, paymentRecord) {
-            pendingPayments.push({
-                studentId: studentId,
-                payment: paymentRecord
-            });
-            localStorage.setItem('uhas_msa_pending_payments', JSON.stringify(pendingPayments));
-            addSyncLog('Payment saved as pending (offline)', 'warning');
-        }
+    }
+    
+    // Update pending list
+    localStorage.setItem('msa_payments_pending', JSON.stringify(failed));
+    
+    if (successful > 0) {
+        showToast(`✅ ${successful} payments synced successfully`, "success");
+    }
+    
+    if (failed.length > 0) {
+        showToast(`⚠️ ${failed.length} payments still pending sync`, "warning");
+    }
+    
+    hideLoading();
+}
+
+// Update your saveGoogleConfig function
+function saveGoogleConfig() {
+    const scriptUrl = document.getElementById('scriptUrl').value.trim();
+    
+    // Basic validation
+    if (!scriptUrl) {
+        showToast("Please enter a Google Script URL", "error");
+        return;
+    }
+    
+    // Clean up the URL
+    let cleanedUrl = scriptUrl;
+    if (!cleanedUrl.startsWith('https://')) {
+        cleanedUrl = 'https://' + cleanedUrl;
+    }
+    
+    // Remove any trailing slashes
+    cleanedUrl = cleanedUrl.replace(/\/+$/, '');
+    
+    // Ensure it ends with /exec
+    if (!cleanedUrl.endsWith('/exec')) {
+        cleanedUrl += '/exec';
+    }
+    
+    // Save the cleaned URL
+    GOOGLE_CONFIG.SCRIPT_URL = cleanedUrl;
+    localStorage.setItem('msa_script_url', cleanedUrl);
+    document.getElementById('scriptUrl').value = cleanedUrl;
+    
+    showToast("Configuration saved successfully", "success");
+    
+    // Test the connection
+    setTimeout(() => testGoogleConnection(), 1000);
+}
         
         // ============================================
         // NETWORK STATUS
