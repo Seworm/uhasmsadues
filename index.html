@@ -1199,6 +1199,22 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     
     <script>
+        // Wait for DOM to be fully loaded before accessing elements
+function ensureDOMLoaded(callback) {
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', callback);
+    } else {
+        callback();
+    }
+}
+
+// Wrap your initialization in this
+ensureDOMLoaded(function() {
+    initializeSystem();
+    setupEventListeners();
+    checkUserSession();
+    updateOnlineStatus();
+});
         // ============================================
         // COMPLETE STUDENT DATA - ALL 400+ STUDENTS
         // ============================================
@@ -2928,57 +2944,209 @@
         }
         
         async function syncData() {
-            if (!isOnline) {
-                updateOnlineStatus();
-                return;
-            }
-            
-            showSyncIndicator('Syncing data...');
-            
-            try {
-                // 1. Sync student data
-                const studentsResponse = await fetchGoogleSheetsData('getStudents');
-                if (studentsResponse.success && studentsResponse.data) {
-                    // Merge data from Google Sheets with local data
-                    mergeStudentData(studentsResponse.data);
-                    updateDashboard();
-                }
-                
-                // 2. Sync payment history
-                const paymentsResponse = await fetchGoogleSheetsData('getPayments');
-                if (paymentsResponse.success && paymentsResponse.data) {
-                    paymentHistory = paymentsResponse.data;
-                    localStorage.setItem('uhas_msa_payment_history', JSON.stringify(paymentHistory));
-                }
-                
-                // 3. Sync recent activity
-                const activityResponse = await fetchGoogleSheetsData('getActivity');
-                if (activityResponse.success && activityResponse.data) {
-                    recentActivity = activityResponse.data;
-                    updateActivityDisplay();
-                }
-                
-                // 4. Sync active users
-                const usersResponse = await fetchGoogleSheetsData('getActiveUsers');
-                if (usersResponse.success && usersResponse.data) {
-                    activeUsers = usersResponse.data;
-                    updateActiveUsersDisplay();
-                }
-                
-                lastSyncTime = new Date().toISOString();
-                document.getElementById('lastSyncTime').textContent = new Date().toLocaleTimeString();
-                
-                addSyncLog('Data synchronized successfully', 'success');
-                showSyncIndicator('Sync complete', 'success', 2000);
-                
-                // Sync any pending payments
-                syncPendingPayments();
-                
-            } catch (error) {
-                addSyncLog('Sync failed: ' + error.message, 'error');
-                showSyncIndicator('Sync failed', 'error', 3000);
-            }
+    if (!isOnline) {
+        updateOnlineStatus();
+        return;
+    }
+    
+    // Check if sync elements exist before using them
+    const syncIndicator = document.getElementById('syncIndicator');
+    const syncMessage = document.getElementById('syncMessage');
+    const lastSyncTimeElement = document.getElementById('lastSyncTime');
+    
+    if (syncIndicator && syncMessage) {
+        showSyncIndicator('Syncing data...');
+    }
+    
+    try {
+        // 1. Sync student data
+        const studentsResponse = await fetchGoogleSheetsData('getStudents');
+        if (studentsResponse.success && studentsResponse.data) {
+            // Merge data from Google Sheets with local data
+            mergeStudentData(studentsResponse.data);
+            updateDashboard();
         }
+        
+        // 2. Sync payment history
+        const paymentsResponse = await fetchGoogleSheetsData('getPayments');
+        if (paymentsResponse.success && paymentsResponse.data) {
+            paymentHistory = paymentsResponse.data;
+            localStorage.setItem('uhas_msa_payment_history', JSON.stringify(paymentHistory));
+        }
+        
+        // 3. Sync recent activity
+        const activityResponse = await fetchGoogleSheetsData('getActivity');
+        if (activityResponse.success && activityResponse.data) {
+            recentActivity = activityResponse.data;
+            updateActivityDisplay();
+        }
+        
+        // 4. Sync active users
+        const usersResponse = await fetchGoogleSheetsData('getActiveUsers');
+        if (usersResponse.success && usersResponse.data) {
+            activeUsers = usersResponse.data;
+            updateActiveUsersDisplay();
+        }
+        
+        lastSyncTime = new Date().toISOString();
+        
+        // Safely update last sync time
+        if (lastSyncTimeElement) {
+            lastSyncTimeElement.textContent = new Date().toLocaleTimeString();
+        }
+        
+        addSyncLog('Data synchronized successfully', 'success');
+        
+        if (syncIndicator && syncMessage) {
+            showSyncIndicator('Sync complete', 'success', 2000);
+        }
+        
+        // Sync any pending payments
+        syncPendingPayments();
+        
+    } catch (error) {
+        console.error('Sync error details:', error);
+        
+        // Safe error logging
+        const errorMessage = error.message || 'Unknown sync error';
+        addSyncLog('Sync failed: ' + errorMessage, 'error');
+        
+        if (syncIndicator && syncMessage) {
+            showSyncIndicator('Sync failed', 'error', 3000);
+        }
+    }
+}
+
+// Update the showSyncIndicator function to be safe:
+function showSyncIndicator(message, type = 'info', duration = 0) {
+    const indicator = document.getElementById('syncIndicator');
+    const messageSpan = document.getElementById('syncMessage');
+    
+    if (!indicator || !messageSpan) {
+        console.warn('Sync indicator elements not found');
+        return;
+    }
+    
+    messageSpan.textContent = message;
+    indicator.className = `sync-indicator alert alert-${type} shadow-sm`;
+    indicator.style.display = 'block';
+    
+    if (type === 'info') {
+        indicator.innerHTML = `<i class="fas fa-sync fa-spin me-2"></i> ${message}`;
+    } else if (type === 'success') {
+        indicator.innerHTML = `<i class="fas fa-check-circle me-2"></i> ${message}`;
+    } else if (type === 'error') {
+        indicator.innerHTML = `<i class="fas fa-exclamation-circle me-2"></i> ${message}`;
+    }
+    
+    if (duration > 0) {
+        setTimeout(() => {
+            if (indicator && indicator.style) {
+                indicator.style.display = 'none';
+            }
+        }, duration);
+    }
+}
+
+// Update the updateConnectionStatus function to be safe:
+function updateConnectionStatus() {
+    const statusEl = document.getElementById('connectionStatus');
+    const statusText = document.getElementById('statusText');
+    const statusDetails = document.getElementById('statusDetails');
+    
+    // Check if elements exist
+    if (!statusEl || !statusText || !statusDetails) {
+        console.warn('Connection status elements not found');
+        return;
+    }
+    
+    if (!googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) {
+        statusEl.innerHTML = '<i class="fas fa-plug fa-3x text-muted"></i>';
+        statusText.textContent = "Not Configured";
+        statusDetails.textContent = "Please set your Google Apps Script URL";
+        return;
+    }
+    
+    if (isOnline) {
+        if (lastSyncTime) {
+            statusEl.innerHTML = '<i class="fas fa-plug fa-3x text-success"></i>';
+            statusText.textContent = "Connected";
+            
+            // Safely format the last sync time
+            try {
+                statusDetails.textContent = `Last sync: ${new Date(lastSyncTime).toLocaleTimeString()}`;
+            } catch (e) {
+                statusDetails.textContent = "Last sync: Unknown";
+            }
+        } else {
+            statusEl.innerHTML = '<i class="fas fa-plug fa-3x text-warning"></i>';
+            statusText.textContent = "Ready to Sync";
+            statusDetails.textContent = "Click 'Sync Now' to load data";
+        }
+    } else {
+        statusEl.innerHTML = '<i class="fas fa-plug fa-3x text-danger"></i>';
+        statusText.textContent = "Offline";
+        statusDetails.textContent = "Check your internet connection";
+    }
+}
+
+// Also update the showSection function to ensure elements exist:
+function showSection(sectionId) {
+    document.querySelectorAll('.content-section').forEach(section => {
+        section.style.display = 'none';
+    });
+    
+    document.getElementById(sectionId).style.display = 'block';
+    
+    document.querySelectorAll('.sidebar a').forEach(link => {
+        link.classList.remove('active');
+    });
+    
+    const tabMap = {
+        'dashboardSection': 'dashboardTab',
+        'studentsSection': 'studentsTab',
+        'paymentSection': 'paymentTab',
+        'paymentHistorySection': 'paymentHistoryTab',
+        'reportsSection': 'reportsTab',
+        'syncSection': 'syncTab'
+    };
+    
+    if (tabMap[sectionId]) {
+        document.getElementById(tabMap[sectionId]).classList.add('active');
+    }
+    
+    // Special handling for each section
+    if (sectionId === 'studentsSection') {
+        renderStudentTable();
+    } else if (sectionId === 'paymentHistorySection') {
+        renderPaymentHistoryTable();
+    } else if (sectionId === 'reportsSection') {
+        updateReportStatistics();
+    } else if (sectionId === 'syncSection') {
+        // Check if elements exist before updating
+        setTimeout(() => {
+            if (document.getElementById('connectionStatus')) {
+                updateConnectionStatus();
+            }
+        }, 100);
+    }
+}
+
+// Add this safety check at the beginning of your initialization:
+function safeElementUpdate(elementId, value) {
+    const element = document.getElementById(elementId);
+    if (element) {
+        element.textContent = value;
+    } else {
+        console.warn(`Element with id "${elementId}" not found`);
+    }
+}
+
+// Update all textContent assignments to use the safe function:
+// For example, replace:
+// document.getElementById('statusText').textContent = "Connected";
+// With:
+// safeElementUpdate('statusText', 'Connected');
         
         function mergeStudentData(serverData) {
             // Merge server data with local data
@@ -3142,29 +3310,83 @@
     }
 }
         async function fetchGoogleSheetsData(action) {
-            if (!isOnline) {
-                throw new Error('You are offline.');
-            }
-            
-            if (!googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) {
-                throw new Error('Google Script URL not configured.');
-            }
-            
-            try {
-                const response = await fetch(`${googleScriptUrl}?action=${action}&deviceId=${deviceId}&timestamp=${Date.now()}`);
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-                
-                return await response.json();
-                
-            } catch (error) {
-                console.error('Error fetching from Google Sheets:', error);
-                throw error;
-            }
+    if (!isOnline) {
+        throw new Error('You are offline.');
+    }
+    
+    if (!googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) {
+        throw new Error('Google Script URL not configured.');
+    }
+    
+    try {
+        // Add timeout to prevent hanging
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+        
+        const response = await fetch(`${googleScriptUrl}?action=${action}&deviceId=${deviceId}&timestamp=${Date.now()}`, {
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         
+        const data = await response.json();
+        return data;
+        
+    } catch (error) {
+        console.error(`Error fetching ${action} from Google Sheets:`, error);
+        
+        // Provide more specific error messages
+        if (error.name === 'AbortError') {
+            throw new Error('Request timeout. Server might be slow or unreachable.');
+        } else if (error.message.includes('Failed to fetch')) {
+            throw new Error('Network error. Please check your internet connection.');
+        } else {
+            throw error;
+        }
+    }
+}
+
+        function debugSyncIssues() {
+    console.log("=== DEBUG SYNC ISSUES ===");
+    
+    // Check all required elements
+    const requiredElements = [
+        'syncIndicator', 'syncMessage', 'lastSyncTime',
+        'connectionStatus', 'statusText', 'statusDetails'
+    ];
+    
+    requiredElements.forEach(id => {
+        const element = document.getElementById(id);
+        console.log(`${id}:`, element ? 'Found' : 'NOT FOUND');
+    });
+    
+    // Check current state
+    console.log("isOnline:", isOnline);
+    console.log("googleScriptUrl:", googleScriptUrl);
+    console.log("currentUser:", currentUser);
+    console.log("lastSyncTime:", lastSyncTime);
+    
+    // Test if we're on the sync section
+    console.log("Sync section visible:", document.getElementById('syncSection').style.display !== 'none');
+    
+    // Test network
+    console.log("Network online:", navigator.onLine);
+    
+    // Quick fetch test
+    if (googleScriptUrl && googleScriptUrl !== DEFAULT_SCRIPT_URL) {
+        console.log("Testing fetch...");
+        fetch(googleScriptUrl + '?test=true')
+            .then(r => console.log("Fetch result:", r.status))
+            .catch(e => console.log("Fetch error:", e.message));
+    }
+}
+
+// Call this when you encounter the error
+// debugSyncIssues();
         async function syncPaymentToGoogleSheets(student, paymentRecord) {
             try {
                 const data = {
@@ -3806,4 +4028,5 @@ function updateConnectionStatus(connected, status, details) {
     </script>
 </body>
 </html>
+
 
