@@ -994,6 +994,10 @@
                                         <button class="btn btn-outline-secondary" onclick="resetLocalData()">
                                             <i class="fas fa-redo me-2"></i> Reset Local Cache
                                         </button>
+                                        <!-- Add this button near the other buttons in the Sync section -->
+<button class="btn btn-outline-warning" onclick="quickTest()">
+    <i class="fas fa-bug me-2"></i> Quick Test
+</button>
                                     </div>
                                 </div>
                             </div>
@@ -3044,56 +3048,99 @@
         // ============================================
         
         async function sendToGoogleSheets(data) {
-            if (!isOnline) {
-                throw new Error('You are offline. Data will be saved locally.');
-            }
+    if (!isOnline) {
+        throw new Error('You are offline. Data will be saved locally.');
+    }
+    
+    if (!googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) {
+        throw new Error('Google Script URL not configured.');
+    }
+    
+    try {
+        // Add device info to data
+        data.deviceId = deviceId;
+        data.timestamp = new Date().toISOString();
+        
+        // Set timeout
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Request timeout after 15 seconds')), 15000);
+        });
+        
+        // Method 1: Try with no-cors first (most reliable)
+        try {
+            const fetchPromise = fetch(googleScriptUrl, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            });
             
-            if (!googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) {
-                throw new Error('Google Script URL not configured.');
-            }
+            await Promise.race([fetchPromise, timeoutPromise]);
             
-            try {
-                // Add device info to data
-                data.deviceId = deviceId;
-                data.timestamp = new Date().toISOString();
-                
-                // Try with JSON first
-                let response;
+            // With no-cors we can't read response, but request succeeded
+            return { success: true, message: 'Data sent successfully' };
+            
+        } catch (noCorsError) {
+            console.log('No-cors method failed, trying with cors:', noCorsError);
+            
+            // Method 2: Try with CORS
+            const fetchPromise = fetch(googleScriptUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            });
+            
+            const response = await Promise.race([fetchPromise, timeoutPromise]);
+            
+            if (response.ok) {
                 try {
-                    response = await fetch(googleScriptUrl, {
-                        method: 'POST',
-                        mode: 'no-cors',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(data)
-                    });
-                    
-                    // With 'no-cors' we can't read response, assume success
-                    return { success: true, message: 'Data sent successfully' };
-                    
-                } catch (jsonError) {
-                    console.log('JSON method failed, trying form method:', jsonError);
-                    
-                    // Try with form data
-                    const formData = new FormData();
-                    formData.append('data', JSON.stringify(data));
-                    
-                    response = await fetch(googleScriptUrl, {
-                        method: 'POST',
-                        mode: 'no-cors',
-                        body: formData
-                    });
-                    
-                    return { success: true, message: 'Data sent via form' };
+                    const result = await response.json();
+                    return result;
+                } catch (parseError) {
+                    // Even if we can't parse JSON, HTTP 200 means success
+                    return { success: true, message: 'Data sent (response not JSON)' };
                 }
-                
-            } catch (error) {
-                console.error('Error sending to Google Sheets:', error);
-                throw error;
+            } else {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
         }
         
+    } catch (error) {
+        console.error('Error sending to Google Sheets:', error);
+        throw error;
+    }
+}
+        
+        function quickTest() {
+    console.log("=== QUICK CONNECTION TEST ===");
+    console.log("Google Script URL:", googleScriptUrl);
+    console.log("Is Online:", navigator.onLine);
+    console.log("Current User:", currentUser);
+    console.log("Device ID:", deviceId);
+    
+    // Direct fetch test without waiting
+    if (googleScriptUrl && googleScriptUrl !== DEFAULT_SCRIPT_URL) {
+        showToast("Testing connection...", "info");
+        
+        fetch(`${googleScriptUrl}?quicktest=${Date.now()}`)
+            .then(response => {
+                console.log("Response status:", response.status);
+                if (response.ok) {
+                    showToast("✅ Direct fetch succeeded!", "success");
+                } else {
+                    showToast(`⚠️ HTTP ${response.status}`, "warning");
+                }
+            })
+            .catch(error => {
+                console.error("Direct fetch error:", error);
+                showToast(`❌ Fetch error: ${error.message}`, "error");
+            });
+    }
+}
         async function fetchGoogleSheetsData(action) {
             if (!isOnline) {
                 throw new Error('You are offline.');
@@ -3244,22 +3291,72 @@
         }
         
         async function testConnection() {
-            if (!googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) {
-                alert("Please save a valid Google Script URL first.");
-                return;
+    if (!googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) {
+        alert("Please save a valid Google Script URL first.");
+        return;
+    }
+    
+    showLoading('Testing connection to Google Sheets...');
+    addSyncLog('Testing Google Sheets connection...', 'info');
+    
+    try {
+        // Clean up URL if needed
+        let url = googleScriptUrl.trim();
+        
+        // Test with a simple GET request first (this is usually more reliable)
+        console.log("Testing URL:", url);
+        
+        // Set a timeout to prevent hanging
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Connection timeout after 10 seconds')), 10000);
+        });
+        
+        // Try multiple methods
+        let response;
+        
+        // Method 1: Simple GET with parameters
+        try {
+            const fetchPromise = fetch(`${url}?test=true&timestamp=${Date.now()}&action=ping`);
+            response = await Promise.race([fetchPromise, timeoutPromise]);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
             
-            showLoading('Testing connection to Google Sheets...');
+            const data = await response.json();
             
+            if (data.success) {
+                showToast('✅ Connection successful! Google Sheets is ready.', 'success');
+                addSyncLog('Google Sheets connection test: SUCCESS', 'success');
+                
+                // Update connection status
+                updateConnectionStatus(true, 'Connected', 'Google Sheets is accessible');
+                document.getElementById('connectionStatus').innerHTML = '<i class="fas fa-plug fa-3x text-success"></i>';
+                
+                // Enable auto-sync if not already enabled
+                if (!syncInterval) {
+                    setupAutoSync();
+                }
+                
+                hideLoading();
+                return true;
+            } else {
+                throw new Error(data.message || 'Server returned error');
+            }
+            
+        } catch (getError) {
+            console.log('GET method failed, trying POST:', getError);
+            
+            // Method 2: POST with minimal data
             try {
                 const testData = {
-                    action: 'test',
+                    action: 'ping',
+                    test: true,
                     timestamp: new Date().toISOString(),
-                    deviceId: deviceId,
-                    user: currentUser || 'test_user'
+                    deviceId: deviceId
                 };
                 
-                const response = await fetch(googleScriptUrl, {
+                const fetchPromise = fetch(url, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -3267,46 +3364,109 @@
                     body: JSON.stringify(testData)
                 });
                 
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
+                response = await Promise.race([fetchPromise, timeoutPromise]);
                 
-                const result = await response.json();
-                
-                if (result.success) {
-                    showToast('✅ Connection successful! Google Sheets is ready.', 'success');
-                    addSyncLog('Google Sheets connection test: SUCCESS', 'success');
+                if (response.ok) {
+                    // Even if we can't parse JSON, if we get a 200, connection works
+                    showToast('✅ Connection successful!', 'success');
+                    addSyncLog('Google Sheets connection test: SUCCESS (POST method)', 'success');
                     
-                    // Update connection status
-                    document.getElementById('statusText').textContent = "Connected";
-                    document.getElementById('statusDetails').textContent = "Google Sheets is accessible";
+                    updateConnectionStatus(true, 'Connected', 'Google Sheets is accessible');
                     document.getElementById('connectionStatus').innerHTML = '<i class="fas fa-plug fa-3x text-success"></i>';
                     
-                    // Enable auto-sync if not already enabled
                     if (!syncInterval) {
                         setupAutoSync();
                     }
                     
-                    // Perform initial sync
-                    syncData();
-                    
+                    hideLoading();
+                    return true;
                 } else {
-                    throw new Error(result.message || 'Unknown error');
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 
-            } catch (error) {
-                console.error('Connection test failed:', error);
-                showToast('❌ Connection failed: ' + error.message, 'error');
-                addSyncLog('Google Sheets connection test: FAILED - ' + error.message, 'error');
+            } catch (postError) {
+                console.log('POST method failed, trying with no-cors:', postError);
                 
-                // Update connection status
-                document.getElementById('statusText').textContent = "Connection Failed";
-                document.getElementById('statusDetails').textContent = error.message;
-                document.getElementById('connectionStatus').innerHTML = '<i class="fas fa-plug fa-3x text-danger"></i>';
-            } finally {
-                hideLoading();
+                // Method 3: No-CORS mode (simplest, but can't read response)
+                try {
+                    const fetchPromise = fetch(url, {
+                        method: 'POST',
+                        mode: 'no-cors',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({test: true})
+                    });
+                    
+                    await Promise.race([fetchPromise, timeoutPromise]);
+                    
+                    // With no-cors we can't check response, but request went through
+                    showToast('✅ Connection appears to be working (no-cors mode)', 'warning');
+                    addSyncLog('Google Sheets connection: LIKELY SUCCESS (no-cors mode)', 'warning');
+                    
+                    updateConnectionStatus(true, 'Connected (Limited)', 'Connection in no-cors mode');
+                    document.getElementById('connectionStatus').innerHTML = '<i class="fas fa-plug fa-3x text-warning"></i>';
+                    
+                    if (!syncInterval) {
+                        setupAutoSync();
+                    }
+                    
+                    hideLoading();
+                    return true;
+                    
+                } catch (noCorsError) {
+                    console.log('No-CORS method failed:', noCorsError);
+                    throw new Error('All connection methods failed. Check deployment settings.');
+                }
             }
         }
+        
+    } catch (error) {
+        console.error('Connection test failed:', error);
+        
+        // More user-friendly error messages
+        let errorMessage = error.message;
+        if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
+            errorMessage = 'Network error. Check internet connection and CORS settings.';
+        } else if (errorMessage.includes('timeout')) {
+            errorMessage = 'Connection timeout. Server might be slow or blocked.';
+        }
+        
+        showToast(`❌ Connection failed: ${errorMessage}`, 'error');
+        addSyncLog(`Google Sheets connection test: FAILED - ${errorMessage}`, 'error');
+        
+        updateConnectionStatus(false, 'Connection Failed', errorMessage);
+        document.getElementById('connectionStatus').innerHTML = '<i class="fas fa-plug fa-3x text-danger"></i>';
+        
+        hideLoading();
+        return false;
+    }
+}
+
+function updateConnectionStatus(connected, status, details) {
+    document.getElementById('statusText').textContent = status;
+    document.getElementById('statusDetails').textContent = details;
+}
+        function handleGoogleSheetsError(error, operation) {
+    console.error(`Google Sheets ${operation} error:`, error);
+    
+    let userMessage = '';
+    
+    if (error.message.includes('Failed to fetch')) {
+        userMessage = 'Network error. Please check your internet connection.';
+    } else if (error.message.includes('timeout')) {
+        userMessage = 'Request timeout. The server might be slow.';
+    } else if (error.message.includes('CORS')) {
+        userMessage = 'CORS error. Make sure Google Apps Script is deployed correctly.';
+    } else {
+        userMessage = `Error: ${error.message}`;
+    }
+    
+    showToast(`❌ ${operation} failed: ${userMessage}`, 'error');
+    addSyncLog(`${operation} failed: ${error.message}`, 'error');
+    
+    return { success: false, message: userMessage };
+}
         
         // ============================================
         // NETWORK STATUS
@@ -3646,3 +3806,4 @@
     </script>
 </body>
 </html>
+
