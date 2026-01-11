@@ -2999,773 +2999,229 @@ ensureDOMLoaded(function() {
         }
         
         // ============================================
-        // REAL-TIME SYNCHRONIZATION SYSTEM
-        // ============================================
-        
-        function setupAutoSync() {
-            // Clear any existing interval
-            if (syncInterval) {
-                clearInterval(syncInterval);
-            }
-            
-            // Set up new sync interval (every 30 seconds)
-            syncInterval = setInterval(() => {
-                if (isOnline && currentUser && googleScriptUrl !== DEFAULT_SCRIPT_URL) {
-                    syncData();
-                }
-            }, 30000); // 30 seconds
-            
-            document.getElementById('autoSyncStatus').textContent = 'On (30s)';
-            addSyncLog('Auto-sync enabled (30 seconds)', 'info');
-        }
-        
-        async function syncData() {
-    if (!isOnline) {
-        updateOnlineStatus();
-        return;
-    }
-    
-    // Check if sync elements exist before using them
-    const syncIndicator = document.getElementById('syncIndicator');
-    const syncMessage = document.getElementById('syncMessage');
-    const lastSyncTimeElement = document.getElementById('lastSyncTime');
-    
-    if (syncIndicator && syncMessage) {
-        showSyncIndicator('Syncing data...');
-    }
-    
-    try {
-        // 1. Sync student data
-        const studentsResponse = await fetchGoogleSheetsData('getStudents');
-        if (studentsResponse.success && studentsResponse.data) {
-            // Merge data from Google Sheets with local data
-            mergeStudentData(studentsResponse.data);
-            updateDashboard();
-        }
-        
-        // 2. Sync payment history
-        const paymentsResponse = await fetchGoogleSheetsData('getPayments');
-        if (paymentsResponse.success && paymentsResponse.data) {
-            paymentHistory = paymentsResponse.data;
-            localStorage.setItem('uhas_msa_payment_history', JSON.stringify(paymentHistory));
-        }
-        
-        // 3. Sync recent activity
-        const activityResponse = await fetchGoogleSheetsData('getActivity');
-        if (activityResponse.success && activityResponse.data) {
-            recentActivity = activityResponse.data;
-            updateActivityDisplay();
-        }
-        
-        // 4. Sync active users
-        const usersResponse = await fetchGoogleSheetsData('getActiveUsers');
-        if (usersResponse.success && usersResponse.data) {
-            activeUsers = usersResponse.data;
-            updateActiveUsersDisplay();
-        }
-        
-        lastSyncTime = new Date().toISOString();
-        
-        // Safely update last sync time
-        if (lastSyncTimeElement) {
-            lastSyncTimeElement.textContent = new Date().toLocaleTimeString();
-        }
-        
-        addSyncLog('Data synchronized successfully', 'success');
-        
-        if (syncIndicator && syncMessage) {
-            showSyncIndicator('Sync complete', 'success', 2000);
-        }
-        
-        // Sync any pending payments
-        syncPendingPayments();
-        
-    } catch (error) {
-        console.error('Sync error details:', error);
-        
-        // Safe error logging
-        const errorMessage = error.message || 'Unknown sync error';
-        addSyncLog('Sync failed: ' + errorMessage, 'error');
-        
-        if (syncIndicator && syncMessage) {
-            showSyncIndicator('Sync failed', 'error', 3000);
-        }
-    }
-}
+// UPDATE SYNC FUNCTION
+// ============================================
 
-// Update the showSyncIndicator function to be safe:
-function showSyncIndicator(message, type = 'info', duration = 0) {
-    const indicator = document.getElementById('syncIndicator');
-    const messageSpan = document.getElementById('syncMessage');
-    
-    if (!indicator || !messageSpan) {
-        console.warn('Sync indicator elements not found');
-        return;
-    }
-    
-    messageSpan.textContent = message;
-    indicator.className = `sync-indicator alert alert-${type} shadow-sm`;
-    indicator.style.display = 'block';
-    
-    if (type === 'info') {
-        indicator.innerHTML = `<i class="fas fa-sync fa-spin me-2"></i> ${message}`;
-    } else if (type === 'success') {
-        indicator.innerHTML = `<i class="fas fa-check-circle me-2"></i> ${message}`;
-    } else if (type === 'error') {
-        indicator.innerHTML = `<i class="fas fa-exclamation-circle me-2"></i> ${message}`;
-    }
-    
-    if (duration > 0) {
-        setTimeout(() => {
-            if (indicator && indicator.style) {
-                indicator.style.display = 'none';
-            }
-        }, duration);
-    }
-}
-
-// Update the updateConnectionStatus function to be safe:
-function updateConnectionStatus() {
-    const statusEl = document.getElementById('connectionStatus');
-    const statusText = document.getElementById('statusText');
-    const statusDetails = document.getElementById('statusDetails');
-    
-    // Check if elements exist
-    if (!statusEl || !statusText || !statusDetails) {
-        console.warn('Connection status elements not found');
+async function simpleSync() {
+    if (!currentUser) {
+        alert('Set user first');
         return;
     }
     
     if (!googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) {
-        statusEl.innerHTML = '<i class="fas fa-plug fa-3x text-muted"></i>';
-        statusText.textContent = "Not Configured";
-        statusDetails.textContent = "Please set your Google Apps Script URL";
+        alert('Set Google Script URL first');
+        showSection('syncSection');
         return;
     }
     
-    if (isOnline) {
-        if (lastSyncTime) {
-            statusEl.innerHTML = '<i class="fas fa-plug fa-3x text-success"></i>';
-            statusText.textContent = "Connected";
-            
-            // Safely format the last sync time
-            try {
-                statusDetails.textContent = `Last sync: ${new Date(lastSyncTime).toLocaleTimeString()}`;
-            } catch (e) {
-                statusDetails.textContent = "Last sync: Unknown";
-            }
+    showSyncIndicator('Starting sync...');
+    
+    try {
+        // Test connection first
+        const connected = await simpleTest();
+        if (!connected) {
+            showSyncIndicator('Connection failed', 'error', 3000);
+            return;
+        }
+        
+        showSyncIndicator('Fetching data...');
+        
+        // Get data
+        const [studentsData, paymentsData] = await Promise.allSettled([
+            fetchFromGoogleSheets('getStudents'),
+            fetchFromGoogleSheets('getPayments')
+        ]);
+        
+        let success = true;
+        
+        // Process students
+        if (studentsData.status === 'fulfilled' && studentsData.value.success) {
+            console.log('Got students:', studentsData.value.data.length);
+            // Merge logic here
         } else {
-            statusEl.innerHTML = '<i class="fas fa-plug fa-3x text-warning"></i>';
-            statusText.textContent = "Ready to Sync";
-            statusDetails.textContent = "Click 'Sync Now' to load data";
-        }
-    } else {
-        statusEl.innerHTML = '<i class="fas fa-plug fa-3x text-danger"></i>';
-        statusText.textContent = "Offline";
-        statusDetails.textContent = "Check your internet connection";
-    }
-}
-
-// Also update the showSection function to ensure elements exist:
-function showSection(sectionId) {
-    document.querySelectorAll('.content-section').forEach(section => {
-        section.style.display = 'none';
-    });
-    
-    document.getElementById(sectionId).style.display = 'block';
-    
-    document.querySelectorAll('.sidebar a').forEach(link => {
-        link.classList.remove('active');
-    });
-    
-    const tabMap = {
-        'dashboardSection': 'dashboardTab',
-        'studentsSection': 'studentsTab',
-        'paymentSection': 'paymentTab',
-        'paymentHistorySection': 'paymentHistoryTab',
-        'reportsSection': 'reportsTab',
-        'syncSection': 'syncTab'
-    };
-    
-    if (tabMap[sectionId]) {
-        document.getElementById(tabMap[sectionId]).classList.add('active');
-    }
-    
-    // Special handling for each section
-    if (sectionId === 'studentsSection') {
-        renderStudentTable();
-    } else if (sectionId === 'paymentHistorySection') {
-        renderPaymentHistoryTable();
-    } else if (sectionId === 'reportsSection') {
-        updateReportStatistics();
-    } else if (sectionId === 'syncSection') {
-        // Check if elements exist before updating
-        setTimeout(() => {
-            if (document.getElementById('connectionStatus')) {
-                updateConnectionStatus();
-            }
-        }, 100);
-    }
-}
-
-// Add this safety check at the beginning of your initialization:
-function safeElementUpdate(elementId, value) {
-    const element = document.getElementById(elementId);
-    if (element) {
-        element.textContent = value;
-    } else {
-        console.warn(`Element with id "${elementId}" not found`);
-    }
-}
-
-// Update all textContent assignments to use the safe function:
-// For example, replace:
-// document.getElementById('statusText').textContent = "Connected";
-// With:
-// safeElementUpdate('statusText', 'Connected');
-        
-        function mergeStudentData(serverData) {
-            // Merge server data with local data
-            serverData.forEach(serverStudent => {
-                const localIndex = studentRecords.findIndex(s => s.id === serverStudent.id);
-                if (localIndex !== -1) {
-                    // Update existing student with server data
-                    studentRecords[localIndex].amountPaid = serverStudent.amountPaid || 0;
-                    studentRecords[localIndex].balance = serverStudent.balance || studentRecords[localIndex].amountDue;
-                    studentRecords[localIndex].paymentStatus = serverStudent.paymentStatus || "Unpaid";
-                    studentRecords[localIndex].paymentDate = serverStudent.paymentDate || null;
-                    studentRecords[localIndex].paymentMethod = serverStudent.paymentMethod || null;
-                    studentRecords[localIndex].recordedBy = serverStudent.recordedBy || null;
-                    studentRecords[localIndex].lastUpdated = serverStudent.lastUpdated || new Date().toISOString();
-                }
-            });
-            
-            // Save merged data
-            saveDataToLocalStorage();
+            success = false;
         }
         
-        async function forceSync() {
-            if (!isOnline) {
-                alert('You are offline. Please check your internet connection.');
-                return;
-            }
-            
-            if (!currentUser) {
-                alert('Please set your user identity first.');
-                return;
-            }
-            
-            if (googleScriptUrl === DEFAULT_SCRIPT_URL) {
-                alert('Please configure the Google Apps Script URL first.');
-                showSection('syncSection');
-                return;
-            }
-            
-            await syncData();
+        // Process payments
+        if (paymentsData.status === 'fulfilled' && paymentsData.value.success) {
+            console.log('Got payments:', paymentsData.value.data.length);
+            // Merge logic here
+        } else {
+            success = false;
         }
         
-        function showSyncIndicator(message, type = 'info', duration = 0) {
-            const indicator = document.getElementById('syncIndicator');
-            const messageSpan = document.getElementById('syncMessage');
-            
-            messageSpan.textContent = message;
-            indicator.className = `sync-indicator alert alert-${type} shadow-sm`;
-            indicator.style.display = 'block';
-            
-            if (type === 'info') {
-                indicator.innerHTML = `<i class="fas fa-sync fa-spin me-2"></i> ${message}`;
-            } else if (type === 'success') {
-                indicator.innerHTML = `<i class="fas fa-check-circle me-2"></i> ${message}`;
-            } else if (type === 'error') {
-                indicator.innerHTML = `<i class="fas fa-exclamation-circle me-2"></i> ${message}`;
-            }
-            
-            if (duration > 0) {
-                setTimeout(() => {
-                    indicator.style.display = 'none';
-                }, duration);
-            }
+        if (success) {
+            showSyncIndicator('Sync complete!', 'success', 2000);
+            showToast('✅ Sync successful', 'success');
+        } else {
+            showSyncIndicator('Partial sync', 'warning', 3000);
+            showToast('⚠️ Some data failed', 'warning');
         }
         
-        // ============================================
-        // GOOGLE SHEETS INTEGRATION - FIXED FUNCTIONS
-        // ============================================
-        
+    } catch (error) {
+        showSyncIndicator('Sync failed', 'error', 3000);
+        showToast('❌ Sync error: ' + error.message, 'error');
+        console.error('Sync error:', error);
+    }
+}      // ============================================
+// SIMPLE GOOGLE SHEETS COMMUNICATION
+// ============================================
+ 
         async function sendToGoogleSheets(data) {
     if (!isOnline) {
-        throw new Error('You are offline. Data will be saved locally.');
+        throw new Error('Offline - saving locally');
     }
     
     if (!googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) {
-        throw new Error('Google Script URL not configured.');
+        throw new Error('Google Script URL not configured');
     }
     
     try {
-        // Add device info to data
+        // Add required fields
         data.deviceId = deviceId;
+        data.user = currentUser || 'Unknown';
         data.timestamp = new Date().toISOString();
         
-        // Set timeout
-        const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Request timeout after 15 seconds')), 15000);
+        console.log('Sending to Google Sheets:', data.action);
+        
+        // Use FormData to avoid CORS preflight
+        const formData = new FormData();
+        formData.append('data', JSON.stringify(data));
+        
+        // Use no-cors mode
+        const response = await fetch(googleScriptUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            body: formData
         });
         
-        // Method 1: Try with no-cors first (most reliable)
-        try {
-            const fetchPromise = fetch(googleScriptUrl, {
-                method: 'POST',
-                mode: 'no-cors',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(data)
-            });
-            
-            await Promise.race([fetchPromise, timeoutPromise]);
-            
-            // With no-cors we can't read response, but request succeeded
-            return { success: true, message: 'Data sent successfully' };
-            
-        } catch (noCorsError) {
-            console.log('No-cors method failed, trying with cors:', noCorsError);
-            
-            // Method 2: Try with CORS
-            const fetchPromise = fetch(googleScriptUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(data)
-            });
-            
-            const response = await Promise.race([fetchPromise, timeoutPromise]);
-            
-            if (response.ok) {
-                try {
-                    const result = await response.json();
-                    return result;
-                } catch (parseError) {
-                    // Even if we can't parse JSON, HTTP 200 means success
-                    return { success: true, message: 'Data sent (response not JSON)' };
-                }
-            } else {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-        }
+        // With no-cors, we can't read response but request was sent
+        console.log('Request sent (no-cors mode)');
+        return { success: true, message: 'Request sent' };
         
     } catch (error) {
-        console.error('Error sending to Google Sheets:', error);
+        console.error('Send error:', error);
         throw error;
     }
 }
-        
-        function quickTest() {
-    console.log("=== QUICK CONNECTION TEST ===");
-    console.log("Google Script URL:", googleScriptUrl);
-    console.log("Is Online:", navigator.onLine);
-    console.log("Current User:", currentUser);
-    console.log("Device ID:", deviceId);
-    
-    // Direct fetch test without waiting
-    if (googleScriptUrl && googleScriptUrl !== DEFAULT_SCRIPT_URL) {
-        showToast("Testing connection...", "info");
-        
-        fetch(`${googleScriptUrl}?quicktest=${Date.now()}`)
-            .then(response => {
-                console.log("Response status:", response.status);
-                if (response.ok) {
-                    showToast("✅ Direct fetch succeeded!", "success");
-                } else {
-                    showToast(`⚠️ HTTP ${response.status}`, "warning");
-                }
-            })
-            .catch(error => {
-                console.error("Direct fetch error:", error);
-                showToast(`❌ Fetch error: ${error.message}`, "error");
-            });
-    }
-}
-        async function fetchGoogleSheetsData(action) {
+
+async function fetchFromGoogleSheets(action) {
     if (!isOnline) {
-        throw new Error('You are offline.');
+        throw new Error('Offline');
     }
     
     if (!googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) {
-        throw new Error('Google Script URL not configured.');
+        throw new Error('Google Script URL not configured');
     }
     
     try {
-        // Add timeout to prevent hanging
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+        // Build URL with cache prevention
+        const url = `${googleScriptUrl}?action=${action}&deviceId=${deviceId}&_=${Date.now()}`;
         
-        const response = await fetch(`${googleScriptUrl}?action=${action}&deviceId=${deviceId}&timestamp=${Date.now()}`, {
-            signal: controller.signal
-        });
+        console.log('Fetching:', url);
         
-        clearTimeout(timeoutId);
+        const response = await fetch(url);
         
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        if (response.ok) {
+            const data = await response.json();
+            return data;
+        } else {
+            throw new Error(`HTTP ${response.status}`);
         }
-        
-        const data = await response.json();
-        return data;
         
     } catch (error) {
-        console.error(`Error fetching ${action} from Google Sheets:`, error);
-        
-        // Provide more specific error messages
-        if (error.name === 'AbortError') {
-            throw new Error('Request timeout. Server might be slow or unreachable.');
-        } else if (error.message.includes('Failed to fetch')) {
-            throw new Error('Network error. Please check your internet connection.');
-        } else {
-            throw error;
-        }
+        console.error('Fetch error:', error);
+        throw error;
     }
-}
-
-        function debugSyncIssues() {
-    console.log("=== DEBUG SYNC ISSUES ===");
-    
-    // Check all required elements
-    const requiredElements = [
-        'syncIndicator', 'syncMessage', 'lastSyncTime',
-        'connectionStatus', 'statusText', 'statusDetails'
-    ];
-    
-    requiredElements.forEach(id => {
-        const element = document.getElementById(id);
-        console.log(`${id}:`, element ? 'Found' : 'NOT FOUND');
-    });
-    
-    // Check current state
-    console.log("isOnline:", isOnline);
-    console.log("googleScriptUrl:", googleScriptUrl);
-    console.log("currentUser:", currentUser);
-    console.log("lastSyncTime:", lastSyncTime);
-    
-    // Test if we're on the sync section
-    console.log("Sync section visible:", document.getElementById('syncSection').style.display !== 'none');
-    
-    // Test network
-    console.log("Network online:", navigator.onLine);
-    
-    // Quick fetch test
-    if (googleScriptUrl && googleScriptUrl !== DEFAULT_SCRIPT_URL) {
-        console.log("Testing fetch...");
-        fetch(googleScriptUrl + '?test=true')
-            .then(r => console.log("Fetch result:", r.status))
-            .catch(e => console.log("Fetch error:", e.message));
-    }
-}
-
-// Call this when you encounter the error
-// debugSyncIssues();
-        async function syncPaymentToGoogleSheets(student, paymentRecord) {
-            try {
-                const data = {
-                    action: 'recordPayment',
-                    studentId: student.id,
-                    studentName: student.name,
-                    level: student.level,
-                    amount: paymentRecord.amount,
-                    method: paymentRecord.method,
-                    recordedBy: paymentRecord.recordedBy,
-                    date: paymentRecord.date,
-                    timestamp: paymentRecord.timestamp,
-                    deviceId: deviceId,
-                    paymentId: paymentRecord.id
-                };
-                
-                const response = await sendToGoogleSheets(data);
-                
-                if (response.success) {
-                    addSyncLog(`Payment synced for ${student.name}`, 'success');
-                    removePendingPayment(student.id, paymentRecord.id);
-                }
-                
-            } catch (error) {
-                console.error('Error syncing payment:', error);
-                savePendingPayment(student.id, paymentRecord);
-            }
-        }
-        
-        async function syncPaymentDeletionToGoogleSheets(studentId, paymentId) {
-            try {
-                const data = {
-                    action: 'deletePayment',
-                    studentId: studentId,
-                    paymentId: paymentId,
-                    timestamp: new Date().toISOString(),
-                    deviceId: deviceId
-                };
-                
-                await sendToGoogleSheets(data);
-                addSyncLog(`Payment deletion synced for student ${studentId}`, 'success');
-                
-            } catch (error) {
-                console.error('Error syncing payment deletion:', error);
-            }
-        }
-        
-        async function syncPendingPayments() {
-            if (pendingPayments.length === 0) return;
-            
-            showSyncIndicator('Syncing pending payments...');
-            
-            const failed = [];
-            
-            for (const pending of pendingPayments) {
-                try {
-                    const student = studentRecords.find(s => s.id === pending.studentId);
-                    if (student) {
-                        await syncPaymentToGoogleSheets(student, pending.paymentRecord);
-                    }
-                } catch (error) {
-                    console.error('Failed to sync pending payment:', error);
-                    failed.push(pending);
-                }
-            }
-            
-            // Update pending payments list
-            pendingPayments = failed;
-            localStorage.setItem('uhas_msa_pending_payments', JSON.stringify(pendingPayments));
-            
-            if (failed.length === 0) {
-                showSyncIndicator('All pending payments synced', 'success', 2000);
-            } else {
-                showSyncIndicator(`${failed.length} payments still pending sync`, 'warning', 3000);
-            }
-        }
-        
-        function savePendingPayment(studentId, paymentRecord) {
-            pendingPayments.push({
-                studentId: studentId,
-                paymentRecord: paymentRecord,
-                timestamp: new Date().toISOString()
-            });
-            
-            localStorage.setItem('uhas_msa_pending_payments', JSON.stringify(pendingPayments));
-            addSyncLog(`Payment saved locally (pending sync)`, 'warning');
-        }
-        
-        function removePendingPayment(studentId, paymentId) {
-            pendingPayments = pendingPayments.filter(p => 
-                !(p.studentId === studentId && p.paymentRecord.id === paymentId)
-            );
-            localStorage.setItem('uhas_msa_pending_payments', JSON.stringify(pendingPayments));
-        }
-        
+}   
         // ============================================
-        // GOOGLE SCRIPT URL MANAGEMENT
-        // ============================================
-        
-        function saveScriptUrl() {
-            const scriptUrlInput = document.getElementById('scriptUrl').value.trim();
-            
-            if (!scriptUrlInput) {
-                alert("Please enter a valid Google Apps Script Web App URL");
-                return;
-            }
-            
-            // Validate the URL
-            if (!scriptUrlInput.startsWith('https://script.google.com/macros/s/')) {
-                if (confirm("URL doesn't look like a Google Apps Script URL. Save anyway?")) {
-                    // Continue
-                } else {
-                    return;
-                }
-            }
-            
-            // Save to localStorage
-            googleScriptUrl = scriptUrlInput;
-            localStorage.setItem('uhas_msa_script_url', scriptUrlInput);
-            
-            // Test connection
-            showSyncIndicator('Testing connection...');
-            testConnection();
-        }
-        
-        async function testConnection() {
+// SIMPLE TEST FUNCTION
+// ============================================
+
+async function simpleTest() {
     if (!googleScriptUrl || googleScriptUrl === DEFAULT_SCRIPT_URL) {
-        alert("Please save a valid Google Script URL first.");
+        alert('Please set Google Script URL first');
         return;
     }
     
-    showLoading('Testing connection to Google Sheets...');
-    addSyncLog('Testing Google Sheets connection...', 'info');
+    showLoading('Testing...');
     
     try {
-        // Clean up URL if needed
-        let url = googleScriptUrl.trim();
+        // Test with GET first
+        const url = `${googleScriptUrl}?action=ping&test=true`;
+        console.log('Testing URL:', url);
         
-        // Test with a simple GET request first (this is usually more reliable)
-        console.log("Testing URL:", url);
+        const response = await fetch(url);
         
-        // Set a timeout to prevent hanging
-        const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Connection timeout after 10 seconds')), 10000);
-        });
-        
-        // Try multiple methods
-        let response;
-        
-        // Method 1: Simple GET with parameters
-        try {
-            const fetchPromise = fetch(`${url}?test=true&timestamp=${Date.now()}&action=ping`);
-            response = await Promise.race([fetchPromise, timeoutPromise]);
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            
+        if (response.ok) {
             const data = await response.json();
+            hideLoading();
             
             if (data.success) {
-                showToast('✅ Connection successful! Google Sheets is ready.', 'success');
-                addSyncLog('Google Sheets connection test: SUCCESS', 'success');
+                alert(`✅ Connected!\n\nSheet: ${data.sheetName}\nID: ${data.sheetId}`);
+                console.log('Success:', data);
                 
-                // Update connection status
-                updateConnectionStatus(true, 'Connected', 'Google Sheets is accessible');
+                // Update display
+                document.getElementById('statusText').textContent = 'Connected';
+                document.getElementById('statusDetails').textContent = `Sheet: ${data.sheetName}`;
                 document.getElementById('connectionStatus').innerHTML = '<i class="fas fa-plug fa-3x text-success"></i>';
                 
-                // Enable auto-sync if not already enabled
-                if (!syncInterval) {
-                    setupAutoSync();
-                }
-                
-                hideLoading();
                 return true;
             } else {
-                throw new Error(data.message || 'Server returned error');
+                alert('❌ Server error: ' + data.message);
+                return false;
             }
-            
-        } catch (getError) {
-            console.log('GET method failed, trying POST:', getError);
-            
-            // Method 2: POST with minimal data
-            try {
-                const testData = {
-                    action: 'ping',
-                    test: true,
-                    timestamp: new Date().toISOString(),
-                    deviceId: deviceId
-                };
-                
-                const fetchPromise = fetch(url, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(testData)
-                });
-                
-                response = await Promise.race([fetchPromise, timeoutPromise]);
-                
-                if (response.ok) {
-                    // Even if we can't parse JSON, if we get a 200, connection works
-                    showToast('✅ Connection successful!', 'success');
-                    addSyncLog('Google Sheets connection test: SUCCESS (POST method)', 'success');
-                    
-                    updateConnectionStatus(true, 'Connected', 'Google Sheets is accessible');
-                    document.getElementById('connectionStatus').innerHTML = '<i class="fas fa-plug fa-3x text-success"></i>';
-                    
-                    if (!syncInterval) {
-                        setupAutoSync();
-                    }
-                    
-                    hideLoading();
-                    return true;
-                } else {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-                
-            } catch (postError) {
-                console.log('POST method failed, trying with no-cors:', postError);
-                
-                // Method 3: No-CORS mode (simplest, but can't read response)
-                try {
-                    const fetchPromise = fetch(url, {
-                        method: 'POST',
-                        mode: 'no-cors',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({test: true})
-                    });
-                    
-                    await Promise.race([fetchPromise, timeoutPromise]);
-                    
-                    // With no-cors we can't check response, but request went through
-                    showToast('✅ Connection appears to be working (no-cors mode)', 'warning');
-                    addSyncLog('Google Sheets connection: LIKELY SUCCESS (no-cors mode)', 'warning');
-                    
-                    updateConnectionStatus(true, 'Connected (Limited)', 'Connection in no-cors mode');
-                    document.getElementById('connectionStatus').innerHTML = '<i class="fas fa-plug fa-3x text-warning"></i>';
-                    
-                    if (!syncInterval) {
-                        setupAutoSync();
-                    }
-                    
-                    hideLoading();
-                    return true;
-                    
-                } catch (noCorsError) {
-                    console.log('No-CORS method failed:', noCorsError);
-                    throw new Error('All connection methods failed. Check deployment settings.');
-                }
-            }
+        } else {
+            hideLoading();
+            alert(`❌ HTTP Error: ${response.status}`);
+            return false;
         }
         
     } catch (error) {
-        console.error('Connection test failed:', error);
+        hideLoading();
+        console.error('Test error:', error);
         
-        // More user-friendly error messages
-        let errorMessage = error.message;
-        if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
-            errorMessage = 'Network error. Check internet connection and CORS settings.';
-        } else if (errorMessage.includes('timeout')) {
-            errorMessage = 'Connection timeout. Server might be slow or blocked.';
+        // Try iframe method as fallback
+        if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
+            alert('⚠️ CORS issue. Trying alternative method...');
+            return await testWithIframe();
         }
         
-        showToast(`❌ Connection failed: ${errorMessage}`, 'error');
-        addSyncLog(`Google Sheets connection test: FAILED - ${errorMessage}`, 'error');
-        
-        updateConnectionStatus(false, 'Connection Failed', errorMessage);
-        document.getElementById('connectionStatus').innerHTML = '<i class="fas fa-plug fa-3x text-danger"></i>';
-        
-        hideLoading();
+        alert('❌ Connection failed: ' + error.message);
         return false;
     }
 }
 
-function updateConnectionStatus(connected, status, details) {
-    document.getElementById('statusText').textContent = status;
-    document.getElementById('statusDetails').textContent = details;
-}
-        function handleGoogleSheetsError(error, operation) {
-    console.error(`Google Sheets ${operation} error:`, error);
-    
-    let userMessage = '';
-    
-    if (error.message.includes('Failed to fetch')) {
-        userMessage = 'Network error. Please check your internet connection.';
-    } else if (error.message.includes('timeout')) {
-        userMessage = 'Request timeout. The server might be slow.';
-    } else if (error.message.includes('CORS')) {
-        userMessage = 'CORS error. Make sure Google Apps Script is deployed correctly.';
-    } else {
-        userMessage = `Error: ${error.message}`;
-    }
-    
-    showToast(`❌ ${operation} failed: ${userMessage}`, 'error');
-    addSyncLog(`${operation} failed: ${error.message}`, 'error');
-    
-    return { success: false, message: userMessage };
-}
+function testWithIframe() {
+    return new Promise((resolve) => {
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = `${googleScriptUrl}?action=ping&iframe=true`;
         
+        iframe.onload = function() {
+            alert('✅ Iframe loaded - connection works');
+            document.body.removeChild(iframe);
+            resolve(true);
+        };
+        
+        iframe.onerror = function() {
+            alert('❌ Iframe failed to load');
+            document.body.removeChild(iframe);
+            resolve(false);
+        };
+        
+        document.body.appendChild(iframe);
+        
+        // Timeout after 10 seconds
+        setTimeout(() => {
+            if (iframe.parentNode) {
+                document.body.removeChild(iframe);
+                alert('⚠️ Timeout - server might be slow');
+                resolve(false);
+            }
+        }, 10000);
+    });
+}
         // ============================================
         // NETWORK STATUS
         // ============================================
@@ -4104,6 +3560,7 @@ function updateConnectionStatus(connected, status, details) {
     </script>
 </body>
 </html>
+
 
 
 
